@@ -1,0 +1,289 @@
+---
+title: "Sex Ads NLP"
+output: html_document
+date: "2025-12-04"
+---
+#Load Data
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(pROC)  
+
+# Set seed for reproducibility
+set.seed(123)
+
+#Load Data
+setwd("~/Library/CloudStorage/Box-Box/Sex Ads Project/Data Analysis")
+sex_ads <- read.csv("sex_ad_w_nlp_final.csv")
+head(sex_ads)
+```
+
+#Create trafficking variale
+```{r}
+sex_ads$traff <- ifelse(
+  sex_ads$trustworthy_st == 1 | 
+  sex_ads$phone_st == 1 | 
+  sex_ads$youth_st == 1 |
+  sex_ads$petite_st == 1 |
+  sex_ads$ethnicity_st == 1, 1,  # Added == 1
+  0
+)
+table(sex_ads$traff)
+```
+
+#Create city variables
+```{r}
+#Cities w/ over a million residents
+largecity <- c("houston", "san Antonio", "dallas", "fort_worth")
+#Cities w/ less than 200,000 people
+smallcity <- c("abilene", "beaumont", "brownsville", "college_station", "del rio", "galveston", "huntsville", "killeen",  "mcallen", "midcities", "odessa", "texarkana", "tyler", "victoria","wace")
+print(smallcity)
+
+#Create city variables
+sex_ads$large_city_g <- ifelse(sex_ads$City %in% largecity,1,0)
+sex_ads$small_city_g <- ifelse(sex_ads$City %in% smallcity,1,0)
+
+table(sex_ads$small_city)
+
+table(sex_ads$City)
+23-4
+```
+
+
+#Create HIV Risk
+```{r}
+
+sex_ads$hiv_risk <- ifelse(
+  sex_ads$drug_use_hiv == 1 | 
+  sex_ads$condomless_hiv == 1 | 
+  sex_ads$multi_provide_hiv == 1, 
+  1, 
+  0
+)
+```
+
+#Create Age Binary
+```{r}
+sex_ads$age_young_g <- ifelse(sex_ads$Age <23,1,0)
+table(sex_ads$age_young_g)
+
+```
+#Create race variable
+```{r}
+
+# List of race variables (excluding white_r since it is handled separately)
+race_vars <- c("other_r", "latinx_r", "indigenous_r", "black_r", "asian_r")
+
+# Initialize race variable with "Not listed" by default
+sex_ads$race <- "Not listed"
+
+# Assign "White" first since it’s the reference and explicit
+sex_ads$race[sex_ads$white_r == 1] <- "White"
+
+# For each other race variable, assign the label if == 1
+sex_ads$race[sex_ads$other_r == 1] <- "Other"
+sex_ads$race[sex_ads$latinx_r == 1] <- "Latinx"
+sex_ads$race[sex_ads$indigenous_r == 1] <- "Indigenous"
+sex_ads$race[sex_ads$black_r == 1] <- "Black"
+sex_ads$race[sex_ads$asian_r == 1] <- "Asian"
+
+# Convert to factor with White as reference, include "Not listed"
+sex_ads$race <- factor(sex_ads$race,
+                      levels = c("White", "Other", "Latinx", "Indigenous", "Black", "Asian", "Not listed"))
+
+# Check distribution
+table(sex_ads$race)
+
+
+# Race groups
+other_races <- c("white_r", "black_r", "asian_r", "indigenous_r", "other_r")
+
+# Initialize with "Not listed"
+sex_ads$race_simple <- "Not listed"
+
+# Assign Latinx
+sex_ads$race_simple[sex_ads$latinx_r == 1] <- "Latinx"
+
+# Assign combined group if any of the other races == 1 AND not already Latinx
+sex_ads$race_simple[sex_ads$latinx_r != 1 & rowSums(sex_ads[, other_races]) >= 1] <- "White/Black/Asian/Indigenous/Other"
+
+# Factor with desired levels
+sex_ads$race_simple <- factor(sex_ads$race_simple,
+                             levels = c("Latinx", "White/Black/Asian/Indigenous/Other", "Not listed"))
+
+# Check results
+table(sex_ads$race_simple)
+
+sex_ads$race_simple <- fct_relevel(sex_ads$race_simple, "Not listed")
+```
+
+#Descriptive States
+```{r}
+#Non-NLP Variables 
+nrow(sex_ads)
+table(sex_ads$traff)
+726/1157
+table(sex_ads$hiv_risk)
+259/1157
+table(sex_ads$large_city_g)
+742/1157
+table(sex_ads$small_city_g)
+118/1157
+table(sex_ads$age_young_g)
+222/1157
+
+#NLP Variables
+mean(sex_ads$NRC_negative)
+range(sex_ads$NRC_negative)
+mean(sex_ads$verb_final)
+range(sex_ads$verb_final)
+
+#Correlation between other variables and traff (endogenity problem)
+cor(sex_ads$traff, sex_ads$race)
+```
+
+
+
+#Random forrest
+```{r}
+# Light cleaning
+sex_ads <- sex_ads[!is.na(sex_ads$traff), ]
+sex_ads_vi <- sex_ads %>% select(traff, large_city_g, small_city_g, age_young_g, hiv_risk, verb_final, NRC_negative)
+
+# Remove any remaining missing values
+sex_ads_vi <- na.omit(sex_ads_vi)
+
+# Define Leave-One-Out Cross-Validation
+tc <- trainControl(method = "LOOCV")
+
+# Train the Random Forest model with LOOCV and variable importance
+rfModel <- train(
+  traff ~ .,
+  data = sex_ads_vi,
+  method = "rf",
+  trControl = tc,
+  importance = TRUE,
+  ntree = 200
+)
+
+# Print the model
+print(rfModel)
+
+# Extract variable importance
+importance_scores <- varImp(rfModel, scale = TRUE)
+print(importance_scores)
+
+```
+#Plot Variable Importance Model
+```{r}
+
+# Create a mapping from original variable names to display labels
+label_map <- c(
+  large_city_g = "Large city",
+  small_city_g = "Small city",
+  age_young_g  = "Age >23",
+  hiv_risk     = "Engages in HIV risk",
+  verb_final   = "% verb",
+  NRC_negative = "% negative sentiment"
+)
+
+# Update row names in the varImp object
+rn <- rownames(importance_scores$importance)
+rownames(importance_scores$importance) <- ifelse(rn %in% names(label_map), label_map[rn], rn)
+
+# Plot using lattice
+topn <- min(20L, nrow(importance_scores$importance))
+plot(importance_scores, top = topn, main = "Variable Importance")
+```
+#Fit Classification Model
+```{r}
+# Required packages
+library(caret)
+library(pROC)
+library(ggplot2)
+library(dplyr)
+
+# Create binary factor outcome
+sex_ads$traff_yn <- factor(ifelse(sex_ads$traff == 1, "Yes", "No"), levels = c("No", "Yes"))
+
+# Select variables and remove NAs
+sex_ads_pred <- sex_ads %>%
+  select(traff_yn, large_city_g, small_city_g, age_young_g, hiv_risk, verb_final, NRC_negative) %>%
+  na.omit()
+
+# Train/test split (keep this if you still want a held-out test set)
+set.seed(123)
+trainIndex <- createDataPartition(sex_ads_pred$traff_yn, p = 0.7, list = FALSE)
+trainData <- sex_ads_pred[trainIndex, ]
+testData  <- sex_ads_pred[-trainIndex, ]
+
+# Leave-One-Out Cross-Validation with ROC metric
+ctrl <- trainControl(
+  method = "LOOCV",
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+# Train Random Forest (classification) optimized for ROC with LOOCV
+set.seed(123)
+rfModel <- train(
+  traff_yn ~ .,
+  data = trainData,
+  method = "rf",
+  trControl = ctrl,
+  metric = "ROC",
+  importance = TRUE,
+  ntree = 200,
+  tuneLength = 3
+)
+
+print(rfModel)
+
+# Predict on held-out test set
+pred_prob <- predict(rfModel, newdata = testData, type = "prob")[, "Yes"]
+pred_cls  <- predict(rfModel, newdata = testData, type = "raw")
+
+# Confusion matrix
+cm <- confusionMatrix(pred_cls, testData$traff_yn, positive = "Yes")
+print(cm)
+
+# ROC and AUC on the test set
+roc_obj <- roc(response = testData$traff_yn, predictor = pred_prob, levels = c("No", "Yes"))
+auc_val <- auc(roc_obj)
+
+# Plot ROC
+roc_df <- data.frame(
+  tpr = roc_obj$sensitivities,
+  fpr = 1 - roc_obj$specificities
+)
+
+ggplot(roc_df, aes(x = fpr, y = tpr)) +
+  geom_path(color = "#2c7fb8", size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  coord_equal() +
+  labs(
+    title = sprintf("ROC Curve (AUC = %.3f)", auc_val),
+    x = "False Positive Rate",
+    y = "True Positive Rate"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Contingency table: predicted vs actual
+tbl <- table(Predicted = pred_cls, Actual = testData$traff_yn)
+
+# Chi-squared test of independence
+chi_res <- chisq.test(tbl, correct = FALSE)  # set correct=TRUE for Yates correction if you prefer
+chi_res
+
+# Effect size (Cramer's V)
+cramers_v <- sqrt(chi_res$statistic / (sum(tbl) * (min(dim(tbl)) - 1)))
+cramers_v
+```
+
+
+
