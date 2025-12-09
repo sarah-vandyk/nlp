@@ -212,7 +212,7 @@ sex_ads_pred <- sex_ads %>%
   select(traff_yn, large_city_g, small_city_g, age_young_g, hiv_risk, verb_final, NRC_negative) %>%
   na.omit()
 
-# Train/test split (keep this if you still want a held-out test set)
+# Train/test split
 set.seed(123)
 trainIndex <- createDataPartition(sex_ads_pred$traff_yn, p = 0.7, list = FALSE)
 trainData <- sex_ads_pred[trainIndex, ]
